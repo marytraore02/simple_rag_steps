@@ -12,6 +12,17 @@ load_dotenv()
 # Configuration du logging
 logging.basicConfig(level=logging.INFO)
 
+import sys
+from pathlib import Path
+# Ajouter le rep parent au PYTHONPATH pour importer 'src'
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+try:
+    from src.step_4_store.vector_store import search
+    FAISS_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"Impossible d'importer le module de recherche : {e}")
+    FAISS_AVAILABLE = False
+
 # --- 1. Importation des bibliothèques et configuration ---
 st.set_page_config(page_title="Assistant Mairie", page_icon="🏛️")
 
@@ -38,9 +49,9 @@ except Exception as e:
 # --- 2. Initialisation de l'historique des conversations ---
 if "messages" not in st.session_state:
     # Ajout d'un message système initial (optionnel mais peut guider le modèle)
-    # st.session_state.messages = [
-    #     SystemMessage(content="Tu es un assistant virtuel pour la mairie. Réponds aux questions des citoyens de manière claire et concise.")
-    # ]
+    st.session_state.messages = [
+        SystemMessage(content="Tu es un assistant virtuel pour la mairie. Réponds aux questions des citoyens de manière claire et concise.")
+    ]
     # Initialisation avec le message d'accueil de l'assistant
     st.session_state.messages = [{"role": "assistant", "content": "Bonjour, je suis l'assistant virtuel de la mairie. Comment puis-je vous aider aujourd'hui?"}]
 
@@ -71,6 +82,32 @@ def construire_prompt_session(messages, max_messages=10):
             formatted_messages.append(SystemMessage(content=msg["content"]))
     
     return formatted_messages
+
+# --- 3.5 Recherche de contexte (RAG) ---
+def obtenir_contexte(question, top_k=3):
+    """
+    Cherche dans la base de données vectorielle les documents les plus pertinents.
+    """
+    if not FAISS_AVAILABLE:
+        return "", []
+        
+    try:
+        # Appel de la fonction de recherche de notre pipeline
+        resultats = search(question, top_k=top_k)
+        
+        contexte_texte = ""
+        sources = []
+        
+        for r in resultats:
+            contexte_texte += f"---\nDocument: {r['metadata']['source']}\nExtrait: {r['text']}\n"
+            source_nom = r['metadata']['source'].split('/')[-1] # Garder juste le nom du fichier
+            if source_nom not in sources:
+                sources.append(source_nom)
+                
+        return contexte_texte, sources
+    except Exception as e:
+        logging.error(f"Erreur lors de la recherche dans l'index : {e}")
+        return "", []
 
 # --- 4. Génération de réponses via l'API Mistral ---
 def generer_reponse(prompt_messages):
@@ -119,8 +156,30 @@ if prompt := st.chat_input("Posez votre question ici..."):
     with st.chat_message("user"):
         st.write(prompt)
 
-    # Préparation du prompt avec l'historique récent pour l'API
-    prompt_messages_for_api = construire_prompt_session(st.session_state.messages)
+    # RECHERCHE DE CONTEXTE RAG
+    contexte_texte, sources = obtenir_contexte(prompt)
+    
+    # Préparation d'un message caché (système) juste pour cette question pour donner le contexte à Mistral
+    if contexte_texte:
+        messages_temporaires = st.session_state.messages.copy()
+        
+        # On rajoute les instructions et les documents trouvés juste avant la question de l'utilisateur
+        prompt_enrichi = f"""
+Voici des informations extraites de la base de données de la mairie :
+{contexte_texte}
+
+Sers-toi de ces informations pour répondre à la question de l'utilisateur. 
+Si l'information n'est pas dans les documents, dis simplement que tu ne sais pas.
+
+Question de l'utilisateur : {prompt}
+"""
+        # On remplace le dernier message 'user' par notre prompt enrichi
+        messages_temporaires[-1] = {"role": "user", "content": prompt_enrichi}
+        prompt_messages_for_api = construire_prompt_session(messages_temporaires)
+    else:
+        # Pas de contexte trouvé ou erreur, on utilise juste l'historique normal
+        prompt_messages_for_api = construire_prompt_session(st.session_state.messages)
+
 
     # Affichage d'un indicateur de chargement pendant la génération
     with st.chat_message("assistant"):
@@ -132,9 +191,17 @@ if prompt := st.chat_input("Posez votre question ici..."):
 
         # Affichage de la réponse complète
         message_placeholder.write(response_content)
+        
+        # Affichage des sources si on en a trouvé
+        if sources:
+            st.caption(f"📚 **Sources :** {', '.join(sources)}")
+            # On ajoute les sources à la réponse sauvegardée dans l'historique
+            response_history = response_content + f"\n\n*Sources : {', '.join(sources)}*"
+        else:
+            response_history = response_content
 
     # Ajout de la réponse de l'assistant à l'historique interne
-    st.session_state.messages.append({"role": "assistant", "content": response_content})
+    st.session_state.messages.append({"role": "assistant", "content": response_history})
 
 # Optionnel : Ajouter un bouton pour effacer l'historique
 if st.button("Effacer la conversation"):

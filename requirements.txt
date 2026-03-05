@@ -25,6 +25,7 @@ pandas
 matplotlib
 seaborn
 scikit-learn
+streamlit
 
 # ── Build & Runtime ─────────────────────────────────────────
 setuptools

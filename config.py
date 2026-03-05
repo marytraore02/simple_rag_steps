@@ -54,11 +54,11 @@ WHISPER_BEAM_SIZE = 5             # 1=rapide, 5=précis
 # ── Étape 2 : Chunking ──────────────────────────────────────────────────────
 
 # Taille maximale d'un chunk en caractères
-# 1000 caractères ≈ 200-250 tokens (bon pour Mistral/SBERT embeddings)
-CHUNK_SIZE = 1000
+# 1500 caractères ≈ 300-350 tokens (bon pour Mistral/SBERT embeddings et évite de couper les tableaux Markdown)
+CHUNK_SIZE = 1500
 
 # Chevauchement entre chunks adjacents (20% du chunk_size)
-CHUNK_OVERLAP = 200
+CHUNK_OVERLAP = 300
 
 # Headers Markdown pour le pré-découpage structurel
 HEADERS_TO_SPLIT_ON = [

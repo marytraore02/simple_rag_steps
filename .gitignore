@@ -1,0 +1,45 @@
+# ═══════════════════════════════════════════════════════════════
+# .gitignore — Pipeline RAG
+# ═══════════════════════════════════════════════════════════════
+
+# ── Environnement virtuel ────────────────────────────────────
+venv/
+.venv/
+env/
+
+# ── Variables d'environnement (clés API, secrets) ────────────
+.env
+.env.*
+
+# ── Python cache ─────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# ── Distribution / Build ────────────────────────────────────
+build/
+dist/
+*.egg-info/
+*.egg
+
+# ── Jupyter Notebooks ───────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── IDE / Éditeurs ──────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ──────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Données locales / Sorties ───────────────────────────────
+*.faiss
+*.pkl
+*.npy
+output/
+data/

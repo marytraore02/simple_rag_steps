@@ -37,9 +37,15 @@ dist/
 .DS_Store
 Thumbs.db
 
-# ── Données locales / Sorties ───────────────────────────────
+# ── Données générées par le pipeline ────────────────────────
+data/
+outputs/
+
+# ── Fichiers binaires / modèles ─────────────────────────────
 *.faiss
 *.pkl
 *.npy
-output/
-data/
+*.npz
+*.bin
+*.pt
+*.onnx

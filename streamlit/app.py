@@ -1,248 +1,123 @@
-import streamlit as st
-import os
-from mistralai import Mistral
-# from mistralai.models.chat_completion import ChatMessage # Ancien SDK
-# Dans le nouveau SDK, on peut utiliser des dictionnaires ou les classes spécifiques
-from mistralai.models import UserMessage, AssistantMessage, SystemMessage
+"""
+Application Streamlit — Assistant Virtuel de la Mairie.
 
-import logging # Ajout pour un meilleur débogage des erreurs API
-from dotenv import load_dotenv
-load_dotenv()
+Ce fichier est l'orchestrateur principal. Il importe les modules :
+  - llm_config  : gestion du client LLM et génération de réponse
+  - prompts     : prompt système et construction des messages
+  - rag_context : recherche dans la base vectorielle FAISS
+"""
+
+import streamlit as st
+import logging
+
+from llm_config import (
+    AVAILABLE_MODELS,
+    DEFAULT_MODEL,
+    init_client,
+    generer_reponse,
+)
+from prompts import (
+    MESSAGE_ACCUEIL,
+    construire_prompt_session,
+    construire_prompt_rag,
+)
+from rag_context import obtenir_contexte
 
 # Configuration du logging
 logging.basicConfig(level=logging.INFO)
 
-import sys
-from pathlib import Path
-# Ajouter le rep parent au PYTHONPATH pour importer 'src'
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-try:
-    from src.step_4_store.vector_store import search
-    FAISS_AVAILABLE = True
-except ImportError as e:
-    logging.warning(f"Impossible d'importer le module de recherche : {e}")
-    FAISS_AVAILABLE = False
-
-# --- 1. Importation des bibliothèques et configuration ---
+# ── Configuration de la page ─────────────────────────────────────────────────
 st.set_page_config(page_title="Assistant Mairie", page_icon="🏛️")
 
-# Récupération de la clé API Mistral depuis les variables d'environnement
-# !! ATTENTION : Remplacez "VOTRE_CLE_API_MISTRAL_ICI" par votre clé si vous ne configurez pas de variable d'environnement !!
-# Il est FORTEMENT recommandé d'utiliser une variable d'environnement.
-api_key = os.environ.get("MISTRAL_API_KEY") 
-
-# Vérification de la présence de la clé API
-if not api_key:
-    st.error("Clé API Mistral non trouvée. Veuillez définir la variable d'environnement MISTRAL_API_KEY.")
-    # Vous pouvez aussi proposer une saisie directe (moins sécurisé)
-    # api_key = st.text_input("Entrez votre clé API Mistral:", type="password")
-    # if not api_key:
-    st.stop() # Arrête l'exécution si la clé n'est pas fournie
-
+# ── Initialisation du client LLM ─────────────────────────────────────────────
 try:
-    client = Mistral(api_key=api_key)
-    model = "mistral-large-latest" # Ou un autre modèle comme "mistral-small-latest"
+    client = init_client()
+except ValueError as e:
+    st.error(str(e))
+    st.stop()
 except Exception as e:
     st.error(f"Erreur lors de l'initialisation du client Mistral : {e}")
     st.stop()
 
-# --- 2. Initialisation de l'historique des conversations ---
+# ── Sidebar : choix du modèle ────────────────────────────────────────────────
+with st.sidebar:
+    st.header("⚙️ Configuration")
+
+    # Sélection du modèle
+    model_labels = list(AVAILABLE_MODELS.keys())
+    default_index = list(AVAILABLE_MODELS.values()).index(DEFAULT_MODEL)
+
+    selected_label = st.selectbox(
+        "Modèle LLM",
+        model_labels,
+        index=default_index,
+        help="Choisissez le modèle de langage à utiliser pour les réponses.",
+    )
+    model = AVAILABLE_MODELS[selected_label]
+
+    st.caption(f"📡 Modèle actif : `{model}`")
+
+    st.divider()
+
+    # Bouton d'effacement
+    if st.button("🗑️ Effacer la conversation", use_container_width=True):
+        st.session_state.messages = [
+            {"role": "assistant", "content": MESSAGE_ACCUEIL}
+        ]
+        st.rerun()
+
+# ── Initialisation de l'historique ────────────────────────────────────────────
 if "messages" not in st.session_state:
-    # Ajout d'un message système initial (optionnel mais peut guider le modèle)
     st.session_state.messages = [
-        SystemMessage(content="Tu es un assistant virtuel pour la mairie. Réponds aux questions des citoyens de manière claire et concise.")
+        {"role": "assistant", "content": MESSAGE_ACCUEIL}
     ]
-    # Initialisation avec le message d'accueil de l'assistant
-    st.session_state.messages = [{"role": "assistant", "content": "Bonjour, je suis l'assistant virtuel de la mairie. Comment puis-je vous aider aujourd'hui?"}]
 
-# --- 3. Construction du prompt avec l'historique ---
-def construire_prompt_session(messages, max_messages=10):
-    """
-    Construit le prompt pour l'API Mistral en utilisant les messages récents.
-
-    Args:
-        messages (list): Liste complète des messages de la session.
-        max_messages (int): Nombre maximum de messages récents à inclure.
-
-    Returns:
-        list: Liste de messages formatés pour l'API. (UserMessage, AssistantMessage, SystemMessage)
-    """
-    # Garde seulement les N derniers messages pour limiter la taille du prompt
-    recent_messages = messages[-max_messages:] if len(messages) > max_messages else messages
-
-    # Dans le nouveau SDK, on peut envoyer directement la liste de dictionnaires
-    # ou convertir en objets messages. Utilisons les objets pour la robustesse.
-    formatted_messages = []
-    for msg in recent_messages:
-        if msg["role"] == "user":
-            formatted_messages.append(UserMessage(content=msg["content"]))
-        elif msg["role"] == "assistant":
-            formatted_messages.append(AssistantMessage(content=msg["content"]))
-        elif msg["role"] == "system":
-            formatted_messages.append(SystemMessage(content=msg["content"]))
-    
-    return formatted_messages
-
-# --- 3.5 Recherche de contexte (RAG) ---
-def obtenir_contexte(question, top_k=3):
-    """
-    Cherche dans la base de données vectorielle les documents les plus pertinents.
-    """
-    if not FAISS_AVAILABLE:
-        return "", []
-        
-    try:
-        # Appel de la fonction de recherche de notre pipeline
-        resultats = search(question, top_k=top_k)
-        
-        contexte_texte = ""
-        sources = []
-        
-        for r in resultats:
-            contexte_texte += f"---\nDocument: {r['metadata']['source']}\nExtrait: {r['text']}\n"
-            source_nom = r['metadata']['source'].split('/')[-1] # Garder juste le nom du fichier
-            if source_nom not in sources:
-                sources.append(source_nom)
-                
-        return contexte_texte, sources
-    except Exception as e:
-        logging.error(f"Erreur lors de la recherche dans l'index : {e}")
-        return "", []
-
-# --- 4. Génération de réponses via l'API Mistral ---
-def generer_reponse(prompt_messages):
-    """
-    Appelle l'API Mistral pour générer une réponse.
-
-    Args:
-        prompt_messages (list): Messages formatés à envoyer à l'API.
-
-    Returns:
-        str: Le contenu de la réponse générée ou un message d'erreur.
-    """
-    try:
-        response = client.chat.complete(
-            model=model,
-            messages=prompt_messages,
-            temperature=0.2,
-            top_p=0.9,
-            max_tokens=300,
-        )
-        # Vérification si la réponse contient des choix
-        if response.choices:
-            return response.choices[0].message.content
-        else:
-            logging.error("L'API Mistral n'a retourné aucun choix.")
-            return "Je suis désolé, je n'ai pas pu générer de réponse. Aucune option retournée."
-    except Exception as e:
-        logging.error(f"Erreur lors de l'appel à l'API Mistral: {e}")
-        # Fournir plus de détails si possible, par exemple sur les erreurs de quota
-        st.error(f"Erreur lors de la génération de la réponse: {e}")
-        return "Je suis désolé, j'ai rencontré un problème technique. Veuillez réessayer plus tard."
-
-# --- 5. Interface utilisateur Streamlit ---
+# ── Interface principale ─────────────────────────────────────────────────────
 st.title("🏛️ Assistant Virtuel de la Mairie")
-st.caption(f"Utilisation du modèle : {model}")
+st.caption(f"Trifouillis-sur-Loire — Modèle : {model}")
 
-# Affichage des messages précédents de l'historique
-# On itère sur une copie pour éviter les problèmes si la liste est modifiée pendant l'itération
+# Affichage de l'historique des messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
 
-# --- 6. Traitement des entrées utilisateur et génération de réponses ---
+# ── Traitement de la question utilisateur ─────────────────────────────────────
 if prompt := st.chat_input("Posez votre question ici..."):
-    # Ajout du message de l'utilisateur à l'historique interne
+    # Ajouter le message de l'utilisateur à l'historique
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # Affichage immédiat du message de l'utilisateur dans l'interface
     with st.chat_message("user"):
         st.write(prompt)
 
-    # RECHERCHE DE CONTEXTE RAG
+    # Recherche de contexte RAG
     contexte_texte, sources = obtenir_contexte(prompt)
-    
-    # Préparation d'un message caché (système) juste pour cette question pour donner le contexte à Mistral
+
+    # Construction du prompt (avec ou sans contexte RAG)
     if contexte_texte:
-        messages_temporaires = st.session_state.messages.copy()
-        
-        # On rajoute les instructions et les documents trouvés juste avant la question de l'utilisateur
-        prompt_enrichi = f"""
-### RÔLE :
-Vous êtes l'assistant virtuel officiel de la mairie de Trifouillis-sur-Loire. Agissez comme un agent d'accueil numérique compétent et bienveillant.
-
-
-### OBJECTIF :
-Fournir des informations administratives claires et précises (services, démarches, horaires, documents) de la mairie. Faciliter l'accès à l'information et orienter les citoyens.
-
-
-### SOURCES AUTORISÉES :
-Site web officiel : trifouillis-mairie.fr
-Documents municipaux officiels fournis.
-Informations pratiques vérifiées (horaires, contacts).
-NE PAS UTILISER D'AUTRES SOURCES.
-
-
-### COMPORTEMENT & STYLE :
-Ton : Formel, courtois, patient, langage simple et accessible.
-Précision : Informations exactes et vérifiées issues des sources autorisées.
-Ambiguïté : Demander poliment des précisions si la question est vague.
-Info Manquante / Hors Sujet : Indiquer clairement l'impossibilité de répondre, ne pas inventer, et rediriger vers le service compétent ou une ressource officielle (téléphone, site web spécifique).
-
-
-### INTERDICTIONS STRICTES :
-Ne JAMAIS inventer d'informations (procédures, documents, etc.).
-Ne JAMAIS fournir d'information non vérifiée.
-Ne JAMAIS donner d'avis personnel ou politique.
-Ne JAMAIS traiter de données personnelles.
-Ne JAMAIS répondre sur des sujets hors compétence de la mairie (rediriger).
-Ne JAMAIS proposer de contourner les procédures.
-
-
-
-
-EXEMPLE D'INTERACTION GUIDÉE :
-Utilisateur : "Infos pour carte d'identité ?"
-Assistant Attendu : "Bonjour. Pour une carte d'identité à Trifouillis-sur-Loire, prenez RDV au service État Civil. Apportez [Liste concise documents : photo, justif. domicile, ancien titre si besoin, etc.]. Le service est ouvert [Jours/Horaires]. RDV au [Tél] ou sur [Site web si applicable]. Puis-je vous aider autrement ?"
-
-### INFORMATIONS DE LA BASE DE DONNÉES DE LA MAIRIE :
-{contexte_texte}
-
-### QUESTION DE L'UTILISATEUR :
-{prompt}
-
-"""
-        # On remplace le dernier message 'user' par notre prompt enrichi
-        messages_temporaires[-1] = {"role": "user", "content": prompt_enrichi}
-        prompt_messages_for_api = construire_prompt_session(messages_temporaires)
+        prompt_messages = construire_prompt_rag(
+            st.session_state.messages, prompt, contexte_texte
+        )
     else:
-        # Pas de contexte trouvé ou erreur, on utilise juste l'historique normal
-        prompt_messages_for_api = construire_prompt_session(st.session_state.messages)
+        prompt_messages = construire_prompt_session(st.session_state.messages)
 
-
-    # Affichage d'un indicateur de chargement pendant la génération
+    # Génération de la réponse
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
-        message_placeholder.text("...") # Indicateur visuel simple
+        message_placeholder.text("...")
 
-        # Génération de la réponse via l'API
-        response_content = generer_reponse(prompt_messages_for_api)
-
-        # Affichage de la réponse complète
+        response_content = generer_reponse(client, model, prompt_messages)
         message_placeholder.write(response_content)
-        
-        # Affichage des sources si on en a trouvé
+
+        # Affichage des sources
         if sources:
             st.caption(f"📚 **Sources :** {', '.join(sources)}")
-            # On ajoute les sources à la réponse sauvegardée dans l'historique
-            response_history = response_content + f"\n\n*Sources : {', '.join(sources)}*"
+            response_history = (
+                response_content + f"\n\n*Sources : {', '.join(sources)}*"
+            )
         else:
             response_history = response_content
 
-    # Ajout de la réponse de l'assistant à l'historique interne
-    st.session_state.messages.append({"role": "assistant", "content": response_history})
-
-# Optionnel : Ajouter un bouton pour effacer l'historique
-if st.button("Effacer la conversation"):
-    st.session_state.messages = [{"role": "assistant", "content": "Bonjour, je suis l'assistant virtuel de la mairie. Comment puis-je vous aider aujourd'hui?"}]
-    st.rerun() # Recharge la page pour afficher l'état initial
+    # Sauvegarder la réponse dans l'historique
+    st.session_state.messages.append(
+        {"role": "assistant", "content": response_history}
+    )

@@ -134,14 +134,16 @@ def search(query: str, top_k: int = FAISS_TOP_K,
     if index is None:
         return []
 
-    # Encoder la requête avec le même modèle que les chunks
+    # Encoder la requête avec le même modèle que les chunks. 
     model = SentenceTransformer(model_name)
+    # Obtenir l'embedding de la question
     query_embedding = model.encode([query]).astype("float32")
     faiss.normalize_L2(query_embedding)
 
-    # Recherche
+    # Recherche dans l'index
     scores, indices = index.search(query_embedding, top_k)
 
+    # Récupération des segments pertinents
     results = []
     for rank, (idx, score) in enumerate(zip(indices[0], scores[0])):
         if idx < 0 or idx >= len(metadata):

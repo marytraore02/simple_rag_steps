@@ -77,7 +77,7 @@ def construire_prompt_session(messages, max_messages=10):
 
     Args:
         messages (list)     : liste des messages de la session (dicts role/content)
-        max_messages (int)  : nombre max de messages récents à inclure
+        max_messages (int)  : nombre max de messages récents à inclure, Cette limitation est importante pour éviter de dépasser les contraintes de tokens des modèles
 
     Returns:
         list : messages formatés (SystemMessage, UserMessage, AssistantMessage)

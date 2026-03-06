@@ -60,6 +60,7 @@ with st.sidebar:
     st.divider()
 
     # Bouton d'effacement
+    # st.session_stateest un dictionnaire spécial de Streamlit qui persiste entre les rechargements de page
     if st.button("🗑️ Effacer la conversation", use_container_width=True):
         st.session_state.messages = [
             {"role": "assistant", "content": MESSAGE_ACCUEIL}
@@ -67,6 +68,7 @@ with st.sidebar:
         st.rerun()
 
 # ── Initialisation de l'historique ────────────────────────────────────────────
+# Nous vérifions si la clé "messages" existe déjà, sinon nous l'initialisons
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {"role": "assistant", "content": MESSAGE_ACCUEIL}
@@ -86,6 +88,7 @@ if prompt := st.chat_input("Posez votre question ici..."):
     # Ajouter le message de l'utilisateur à l'historique
     st.session_state.messages.append({"role": "user", "content": prompt})
 
+    # Affichage du message de l'utilisateur
     with st.chat_message("user"):
         st.write(prompt)
 
@@ -93,6 +96,7 @@ if prompt := st.chat_input("Posez votre question ici..."):
     contexte_texte, sources = obtenir_contexte(prompt)
 
     # Construction du prompt (avec ou sans contexte RAG)
+    # Construit un prompt enrichi avec les segments pertinents et l'historique récent
     if contexte_texte:
         prompt_messages = construire_prompt_rag(
             st.session_state.messages, prompt, contexte_texte
@@ -106,6 +110,7 @@ if prompt := st.chat_input("Posez votre question ici..."):
         message_placeholder.text("...")
 
         response_content = generer_reponse(client, model, prompt_messages)
+        # Affichage de la réponse
         message_placeholder.write(response_content)
 
         # Affichage des sources

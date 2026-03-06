@@ -25,7 +25,7 @@ except ImportError as e:
 
 def obtenir_contexte(question, top_k=3):
     """
-    Cherche dans la base de données vectorielle les documents les plus pertinents.
+    Cherche dans la base de données vectorielle les documents ou segments les plus pertinents par rapport à la question posée.
 
     Args:
         question (str) : question de l'utilisateur
